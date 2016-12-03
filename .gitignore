@@ -1,0 +1,12 @@
+npfl114
+venv
+**/*.pyc
+**/mnist_data/
+**/result
+**/logs/
+hw4-gym_cartpole_supervised/1-gym-babka-*-completed*
+hw4-gym_cartpole_supervised/1-gym-babka-*-epoch-*
+
+hw4-gym_cartpole_supervised/checkpoint
+hw4-gym_cartpole_supervised/hw-4-gym_cartpole_supervised_model.tar.gz
+hw6-sequence_generation/hw6-sequence_generation.tar.gz
