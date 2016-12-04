@@ -122,13 +122,15 @@ class Network(object):
 
             # Mask so that a valid loss is computed
             mask = tf.sequence_mask(self.sentence_lens, dtype=tf.float32)
+            loss = tf.nn.sparse_softmax_cross_entropy_with_logits(outputs, self.labels)
+            loss_mask = tf.boolean_mask(loss, tf.cast(mask, tf.bool))
+
             softmax = tf.nn.softmax(outputs)
             self.predictions = tf.argmax(softmax, 2)
 
             # Training & loss & accuracy
-            loss = tf.nn.sparse_softmax_cross_entropy_with_logits(outputs, self.labels)
             self.accuracy = tf_metrics.accuracy(self.predictions, self.labels, mask)
-            self.training = tf.train.AdamOptimizer().minimize(loss * mask, global_step=self.global_step)
+            self.training = tf.train.AdamOptimizer().minimize(loss_mask, global_step=self.global_step)
 
             # Summaries
             self.dataset_name = tf.placeholder(tf.string, [])
@@ -183,7 +185,7 @@ if __name__ == "__main__":
     data_test = Dataset(args.data_test, data_train.alphabet)
 
 
-    def eval_hyperparams(rnn_cell, rnn_cell_dim):
+    def evaluate_hyper_parameters(rnn_cell, rnn_cell_dim):
         # Construct the network
         expname = "uppercase-letters-{}{}-bs{}-epochs{}".format(rnn_cell, rnn_cell_dim, args.batch_size,
                                                                 args.epochs)
@@ -202,11 +204,12 @@ if __name__ == "__main__":
 
         return network
 
+
     network = None
     performance = 0
     for rnn_cell in ('LSTM', 'GRU'):
         for rnn_cell_dim in (16, 32, 48):
-            n = eval_hyperparams(rnn_cell, rnn_cell_dim)
+            n = evaluate_hyper_parameters(rnn_cell, rnn_cell_dim)
             p = n.evaluate(data_dev.sentences, data_dev.sentence_lens, data_dev.labels, "dev")
             if performance < p:
                 network = n
