@@ -221,8 +221,8 @@ if __name__ == "__main__":
     network = None
     performance = 0
     for rnn_cell in ('GRU', 'LSTM'):
-        for rnn_cell_dim in (16, 32, 48, 64):
-            for embedding in (('lookup', 8), ('lookup', 16), 'one-hot'):
+        for rnn_cell_dim in (96, 64):
+            for embedding in (('lookup', 64), ('lookup', 16), 'one-hot'):
                 n = evaluate_hyper_parameters(embedding, rnn_cell, rnn_cell_dim)
                 p = n.evaluate(data_dev.sentences, data_dev.sentence_lens, data_dev.labels, "dev")
                 if performance < p:
