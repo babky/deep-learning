@@ -229,7 +229,7 @@ if __name__ == "__main__":
                     network = n
                     performance = p
 
-    print("TF ACCURACY\nAccuracy:{0}".formt(network.evaluate(data_test.sentences, data_test.sentence_lens, data_test.labels, "test")))
+    print("TF ACCURACY\nAccuracy:{0}".format(network.evaluate(data_test.sentences, data_test.sentence_lens, data_test.labels, "test")))
 
     # Manually verify the correctness...
     predictions = network.compute(data_test.sentences, data_test.sentence_lens)
