@@ -4,15 +4,19 @@ from __future__ import division
 from __future__ import print_function
 
 import datetime
+
+import numpy
 import numpy as np
 import tensorflow as tf
 import tensorflow.contrib.layers as tf_layers
+import tensorflow.contrib.metrics as tf_metrics
 
-class Dataset:
-    def __init__(self, filename, alphabet = None):
+
+class Dataset(object):
+    def __init__(self, filename, alphabet=None):
         # Load the sentences
         sentences = []
-        with open(filename, "rw") as file:
+        with open(filename, "r") as file:
             for line in file:
                 sentences.append(line.rstrip("\r\n"))
 
@@ -44,7 +48,7 @@ class Dataset:
 
         # Compute alphabet
         self._alphabet = [""] * len(alphabet_map)
-        for key, value in alphabet_map.iteritems():
+        for key, value in alphabet_map.items():
             self._alphabet[value] = key
 
         self._permutation = np.random.permutation(len(self._sentences))
@@ -70,7 +74,8 @@ class Dataset:
         batch_perm = self._permutation[:batch_size]
         self._permutation = self._permutation[batch_size:]
         batch_len = np.max(self._sentence_lens[batch_perm])
-        return self._sentences[batch_perm, 0:batch_len], self._sentence_lens[batch_perm], self._labels[batch_perm, 0:batch_len]
+        return self._sentences[batch_perm, 0:batch_len], self._sentence_lens[batch_perm], self._labels[batch_perm,
+                                                                                          0:batch_len]
 
     def epoch_finished(self):
         if len(self._permutation) == 0:
@@ -79,13 +84,13 @@ class Dataset:
         return False
 
 
-class Network:
+class Network(object):
     def __init__(self, alphabet_size, rnn_cell, rnn_cell_dim, logdir, expname, threads=1, seed=42):
         # Create an empty graph and a session
         graph = tf.Graph()
         graph.seed = seed
-        self.session = tf.Session(graph = graph, config=tf.ConfigProto(inter_op_parallelism_threads=threads,
-                                                                       intra_op_parallelism_threads=threads))
+        self.session = tf.Session(graph=graph, config=tf.ConfigProto(inter_op_parallelism_threads=threads,
+                                                                     intra_op_parallelism_threads=threads))
 
         timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H%M%S")
         self.summary_writer = tf.train.SummaryWriter("{}/{}-{}".format(logdir, timestamp, expname), flush_secs=10)
@@ -104,17 +109,31 @@ class Network:
             self.sentence_lens = tf.placeholder(tf.int32, [None])
             self.labels = tf.placeholder(tf.int64, [None, None])
 
-            representations = tf.one_hot(self.sentences, alphabet_size)
-            backward_cell = rnn_cell
-            forward_cell = rnn_cell
-            tf.nn.bidirectional_dynamic_rnn()
+            # Embedding
+            represented_sentences = tf.one_hot(self.sentences, alphabet_size)
 
-            # accuracy = ...
-            # loss = # TODO
-            ## self.training = tf.train.AdamOptimizer().minimize(loss, global_step=self.global_step)
+            # RNN
+            rnn_outputs, output_states = tf.nn.bidirectional_dynamic_rnn(rnn_cell, rnn_cell, represented_sentences,
+                                                                         self.sentence_lens, dtype=tf.float32)
+            combined_outputs = tf.concat(2, rnn_outputs)
 
+            # Linear activation
+            outputs = tf_layers.fully_connected(combined_outputs, 2, activation_fn=None)
+
+            # Mask so that a valid loss is computed
+            mask = tf.sequence_mask(self.sentence_lens, dtype=tf.float32)
+            softmax = tf.nn.softmax(outputs)
+            self.predictions = tf.argmax(softmax, 2)
+
+            # Training & loss & accuracy
+            loss = tf.nn.sparse_softmax_cross_entropy_with_logits(outputs, self.labels)
+            self.accuracy = tf_metrics.accuracy(self.predictions, self.labels, mask)
+            self.training = tf.train.AdamOptimizer().minimize(loss * mask, global_step=self.global_step)
+
+            # Summaries
             self.dataset_name = tf.placeholder(tf.string, [])
-            self.summary = tf.scalar_summary(self.dataset_name+"/accuracy", accuracy)
+            self.summary = tf.scalar_summary(self.dataset_name + "/accuracy", self.accuracy)
+            self.summary_writer.add_graph(self.session.graph)
 
             # Initialize variables
             self.session.run(tf.initialize_all_variables())
@@ -130,9 +149,15 @@ class Network:
         self.summary_writer.add_summary(summary, self.training_step)
 
     def evaluate(self, sentences, sentence_lens, labels, dataset_name):
-        summary = self.session.run(self.summary, {self.sentences: sentences, self.sentence_lens: sentence_lens,
-                                                  self.labels: labels, self.dataset_name: dataset_name})
+        summary, accuracy = self.session.run([self.summary, self.accuracy],
+                                             {self.sentences: sentences, self.sentence_lens: sentence_lens,
+                                              self.labels: labels, self.dataset_name: dataset_name})
         self.summary_writer.add_summary(summary, self.training_step)
+        return accuracy
+
+    def compute(self, sentences, sentence_lens):
+        predictions = self.session.run(self.predictions, {self.sentences: sentences, self.sentence_lens: sentence_lens})
+        return predictions
 
 
 if __name__ == "__main__":
@@ -141,6 +166,7 @@ if __name__ == "__main__":
 
     # Parse arguments
     import argparse
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--batch_size", default=16, type=int, help="Batch size.")
     parser.add_argument("--data_train", default="en-ud-train.txt", type=str, help="Training data file.")
@@ -148,8 +174,6 @@ if __name__ == "__main__":
     parser.add_argument("--data_test", default="en-ud-test.txt", type=str, help="Testing data file.")
     parser.add_argument("--epochs", default=10, type=int, help="Number of epochs.")
     parser.add_argument("--logdir", default="logs", type=str, help="Logdir name.")
-    parser.add_argument("--rnn_cell", default="LSTM", type=str, help="RNN cell type.")
-    parser.add_argument("--rnn_cell_dim", default=10, type=int, help="RNN cell dimension.")
     parser.add_argument("--threads", default=1, type=int, help="Maximum number of threads to use.")
     args = parser.parse_args()
 
@@ -158,16 +182,45 @@ if __name__ == "__main__":
     data_dev = Dataset(args.data_dev, data_train.alphabet)
     data_test = Dataset(args.data_test, data_train.alphabet)
 
-    # Construct the network
-    expname = "uppercase-letters-{}{}-bs{}-epochs{}".format(args.rnn_cell, args.rnn_cell_dim, args.batch_size, args.epochs)
-    network = Network(alphabet_size=len(data_train.alphabet), rnn_cell=args.rnn_cell, rnn_cell_dim=args.rnn_cell_dim, logdir=args.logdir, expname=expname, threads=args.threads)
 
-    # Train
-    for epoch in range(args.epochs):
-        print("Training epoch {}".format(epoch))
-        while not data_train.epoch_finished():
-            sentences, sentence_lens, labels = data_train.next_batch(args.batch_size)
-            network.train(sentences, sentence_lens, labels)
+    def eval_hyperparams(rnn_cell, rnn_cell_dim):
+        # Construct the network
+        expname = "uppercase-letters-{}{}-bs{}-epochs{}".format(rnn_cell, rnn_cell_dim, args.batch_size,
+                                                                args.epochs)
+        network = Network(alphabet_size=len(data_train.alphabet), rnn_cell=rnn_cell,
+                          rnn_cell_dim=rnn_cell_dim,
+                          logdir=args.logdir, expname=expname, threads=args.threads)
+        # Train
+        for epoch in range(args.epochs):
+            print("Training epoch {}".format(epoch))
+            while not data_train.epoch_finished():
+                sentences, sentence_lens, labels = data_train.next_batch(args.batch_size)
+                network.train(sentences, sentence_lens, labels)
 
-        network.evaluate(data_dev.sentences, data_dev.sentence_lens, data_dev.labels, "dev")
-        network.evaluate(data_test.sentences, data_test.sentence_lens, data_test.labels, "test")
+            network.evaluate(data_dev.sentences, data_dev.sentence_lens, data_dev.labels, "dev")
+            network.evaluate(data_test.sentences, data_test.sentence_lens, data_test.labels, "test")
+
+        return network
+
+    network = None
+    performance = 0
+    for rnn_cell in ('LSTM', 'GRU'):
+        for rnn_cell_dim in (16, 32, 48):
+            n = eval_hyperparams(rnn_cell, rnn_cell_dim)
+            p = n.evaluate(data_dev.sentences, data_dev.sentence_lens, data_dev.labels, "dev")
+            if performance < p:
+                network = n
+                performance = p
+
+    print(network.evaluate(data_test.sentences, data_test.sentence_lens, data_test.labels, "test"))
+
+    # Manually verify the correctness...
+    predictions = network.compute(data_test.sentences, data_test.sentence_lens)
+    errors = 0
+    for i in range(len(data_test.sentence_lens)):
+        length = data_test.sentence_lens[i]
+        prediction = predictions[i][0:length]
+        label = data_test.labels[i][0:length]
+        errors += numpy.sum((prediction - label) ** 2)
+    lens = numpy.sum(data_test.sentence_lens)
+    print("Errors: {0}, Lens: {1}, Accuracy: {2}".format(errors, lens, 1 - errors / lens))
