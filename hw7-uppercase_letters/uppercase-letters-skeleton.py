@@ -229,7 +229,7 @@ if __name__ == "__main__":
                     network = n
                     performance = p
 
-    print("TF ACCURACY\nAccuracy:{0}".format(network.evaluate(data_test.sentences, data_test.sentence_lens, data_test.labels, "test")))
+    print("TF ACCURACY\nAccuracy: {0}\n".format(network.evaluate(data_test.sentences, data_test.sentence_lens, data_test.labels, "test")))
 
     # Manually verify the correctness...
     predictions = network.compute(data_test.sentences, data_test.sentence_lens)
@@ -238,7 +238,6 @@ if __name__ == "__main__":
         length = data_test.sentence_lens[i]
         prediction = predictions[i][0:length]
         label = data_test.labels[i][0:length]
-        print(prediction, label)
         errors += numpy.sum((prediction - label) ** 2)
     lens = numpy.sum(data_test.sentence_lens)
     print("MANUAL ACCURACY\nErrors: {0}, Lens: {1}, Accuracy: {2}".format(errors, lens, 1 - errors / lens))
