@@ -120,17 +120,23 @@ class Network(object):
             # Linear activation
             outputs = tf_layers.fully_connected(combined_outputs, 2, activation_fn=None)
 
-            # Mask so that a valid loss is computed
-            mask = tf.sequence_mask(self.sentence_lens, dtype=tf.float32)
-            loss = tf.nn.sparse_softmax_cross_entropy_with_logits(outputs, self.labels)
-            loss_mask = tf.boolean_mask(loss, tf.cast(mask, tf.bool))
-
+            # Predictions
             softmax = tf.nn.softmax(outputs)
             self.predictions = tf.argmax(softmax, 2)
 
-            # Training & loss & accuracy
-            self.accuracy = tf_metrics.accuracy(self.predictions, self.labels, mask)
-            self.training = tf.train.AdamOptimizer().minimize(loss_mask, global_step=self.global_step)
+            # Mask so that a valid loss is computed
+            mask = tf.sequence_mask(self.sentence_lens, dtype=tf.float32)
+            boolean_mask = tf.cast(mask, tf.bool)
+            labels_masked = tf.boolean_mask(self.labels, boolean_mask)
+
+            # Accuracy
+            predictions_masked = tf.boolean_mask(self.predictions, boolean_mask)
+            self.accuracy = tf_metrics.accuracy(predictions_masked, labels_masked)
+
+            # Training & loss
+            loss = tf.nn.sparse_softmax_cross_entropy_with_logits(outputs, self.labels)
+            loss_masked = tf.boolean_mask(loss, boolean_mask)
+            self.training = tf.train.AdamOptimizer().minimize(loss_masked, global_step=self.global_step)
 
             # Summaries
             self.dataset_name = tf.placeholder(tf.string, [])
@@ -208,14 +214,14 @@ if __name__ == "__main__":
     network = None
     performance = 0
     for rnn_cell in ('LSTM', 'GRU'):
-        for rnn_cell_dim in (16, 32, 48):
+        for rnn_cell_dim in (16, 32, 48, 64):
             n = evaluate_hyper_parameters(rnn_cell, rnn_cell_dim)
             p = n.evaluate(data_dev.sentences, data_dev.sentence_lens, data_dev.labels, "dev")
             if performance < p:
                 network = n
                 performance = p
 
-    print(network.evaluate(data_test.sentences, data_test.sentence_lens, data_test.labels, "test"))
+    print("TF ACCURACY\nAccuracy:{0}".formt(network.evaluate(data_test.sentences, data_test.sentence_lens, data_test.labels, "test")))
 
     # Manually verify the correctness...
     predictions = network.compute(data_test.sentences, data_test.sentence_lens)
@@ -224,6 +230,7 @@ if __name__ == "__main__":
         length = data_test.sentence_lens[i]
         prediction = predictions[i][0:length]
         label = data_test.labels[i][0:length]
+        print(prediction, label)
         errors += numpy.sum((prediction - label) ** 2)
     lens = numpy.sum(data_test.sentence_lens)
-    print("Errors: {0}, Lens: {1}, Accuracy: {2}".format(errors, lens, 1 - errors / lens))
+    print("MANUAL ACCURACY\nErrors: {0}, Lens: {1}, Accuracy: {2}".format(errors, lens, 1 - errors / lens))
