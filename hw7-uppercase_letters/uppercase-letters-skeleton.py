@@ -85,7 +85,7 @@ class Dataset(object):
 
 
 class Network(object):
-    def __init__(self, alphabet_size, rnn_cell, rnn_cell_dim, logdir, expname, threads=1, seed=42):
+    def __init__(self, embedding, alphabet_size, rnn_cell, rnn_cell_dim, logdir, expname, threads=1, seed=42):
         # Create an empty graph and a session
         graph = tf.Graph()
         graph.seed = seed
@@ -110,7 +110,14 @@ class Network(object):
             self.labels = tf.placeholder(tf.int64, [None, None])
 
             # Embedding
-            represented_sentences = tf.one_hot(self.sentences, alphabet_size)
+            if embedding == "one-hot":
+                represented_sentences = tf.one_hot(self.sentences, alphabet_size)
+            elif isinstance(embedding, tuple) and embedding[0] == "lookup":
+                embedding_size = embedding[1]
+                representation = tf.Variable(tf.random_uniform([alphabet_size, embedding_size], -1.0, 1.0))
+                represented_sentences = tf.nn.embedding_lookup(representation, self.sentences)
+            else:
+                raise ValueError("Unknown embedding {}".format(embedding))
 
             # RNN
             rnn_outputs, output_states = tf.nn.bidirectional_dynamic_rnn(rnn_cell, rnn_cell, represented_sentences,
@@ -191,11 +198,11 @@ if __name__ == "__main__":
     data_test = Dataset(args.data_test, data_train.alphabet)
 
 
-    def evaluate_hyper_parameters(rnn_cell, rnn_cell_dim):
+    def evaluate_hyper_parameters(embedding, rnn_cell, rnn_cell_dim):
         # Construct the network
-        expname = "uppercase-letters-{}{}-bs{}-epochs{}".format(rnn_cell, rnn_cell_dim, args.batch_size,
-                                                                args.epochs)
-        network = Network(alphabet_size=len(data_train.alphabet), rnn_cell=rnn_cell,
+        expname = "uppercase-letters-{}{}-{}-bs{}-epochs{}".format(rnn_cell, rnn_cell_dim, embedding,
+                                                                   args.batch_size, args.epochs)
+        network = Network(embedding, alphabet_size=len(data_train.alphabet), rnn_cell=rnn_cell,
                           rnn_cell_dim=rnn_cell_dim,
                           logdir=args.logdir, expname=expname, threads=args.threads)
         # Train
@@ -213,13 +220,14 @@ if __name__ == "__main__":
 
     network = None
     performance = 0
-    for rnn_cell in ('LSTM', 'GRU'):
+    for rnn_cell in ('GRU', 'LSTM'):
         for rnn_cell_dim in (16, 32, 48, 64):
-            n = evaluate_hyper_parameters(rnn_cell, rnn_cell_dim)
-            p = n.evaluate(data_dev.sentences, data_dev.sentence_lens, data_dev.labels, "dev")
-            if performance < p:
-                network = n
-                performance = p
+            for embedding in (('lookup', 8), ('lookup', 16), 'one-hot'):
+                n = evaluate_hyper_parameters(embedding, rnn_cell, rnn_cell_dim)
+                p = n.evaluate(data_dev.sentences, data_dev.sentence_lens, data_dev.labels, "dev")
+                if performance < p:
+                    network = n
+                    performance = p
 
     print("TF ACCURACY\nAccuracy:{0}".formt(network.evaluate(data_test.sentences, data_test.sentence_lens, data_test.labels, "test")))
 
