@@ -42,7 +42,7 @@ class Network:
 
     def learned_we(self, words):
         embedding_size = 128
-        self.embedding = tf.Variable(tf.random_uniform([words, embedding_size], -1.0, 1.0))
+        self.embedding = tf.Variable(tf.random_uniform([len(words), embedding_size], -1.0, 1.0))
         represented_sentences = tf.nn.embedding_lookup(self.embedding, self.forms)
         return represented_sentences
 
@@ -50,8 +50,20 @@ class Network:
         print('Loading the embeddings from {0}'.format(LANGUAGES[language]['embeddings']), file=sys.stderr)
         embedding_size = self.PRETRAINED_EMBEDDING_SIZE
         we = WordEmbeddings(LANGUAGES[language]['embeddings'])
-        embedding = np.concatenate((we.we, np.zeros([words - len(we.we), embedding_size])), axis=0)
+        embedding = np.concatenate((we.we, np.zeros([len(words) - len(we.we), embedding_size])), axis=0)
+
+        perm = np.zeros([len(words)], dtype=int)
+        l = len(words) - 1
+        for i in range(len(words)):
+            perm[i] = l
+            if words[i] in we.words_map:
+                perm[i] = we.words_map[words[i]]
+            else:
+                l -= 1
+
         embedding = embedding.astype(np.float32)
+        embedding = embedding[perm]
+
         self.embedding = tf.Variable(embedding, name='embedding', trainable=False)
         represented_sentences = tf.nn.embedding_lookup(self.embedding, self.forms)
         return represented_sentences
@@ -190,7 +202,7 @@ if __name__ == "__main__":
     expname = "tagger-{}{}-m{}-bs{}-epochs{}".format(args.rnn_cell, args.rnn_cell_dim, args.method, args.batch_size,
                                                      args.epochs)
     network = Network(rnn_cell=args.rnn_cell, rnn_cell_dim=args.rnn_cell_dim, method=args.method,
-                      words=len(data_train.factors[data_train.FORMS]['words']),
+                      words=data_train.factors[data_train.FORMS]['words'],
                       logdir=args.logdir, expname=expname, threads=args.threads, language=args.language)
 
     # Train
