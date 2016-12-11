@@ -38,6 +38,7 @@ LANGUAGES = {
 
 class Network:
     TAG_COUNT = 19
+    PRETRAINED_EMBEDDING_SIZE = 100
 
     def learned_we(self, words):
         embedding_size = 128
@@ -46,16 +47,17 @@ class Network:
         return represented_sentences
 
     def only_pretrained_we(self, words, language):
-        print('Loading the embeddings from {0}'.format(LANGUAGES[language]['embeddings']))
-        embedding_size = 100
+        print('Loading the embeddings from {0}'.format(LANGUAGES[language]['embeddings']), file=sys.stderr)
+        embedding_size = self.PRETRAINED_EMBEDDING_SIZE
         we = WordEmbeddings(LANGUAGES[language]['embeddings'])
         embedding = np.concatenate((we.we, np.zeros([words - len(we.we), embedding_size])), axis=0)
         embedding = embedding.astype(np.float32)
-        self.embedding = tf.Variable(embedding, name='embedding')
+        self.embedding = tf.Variable(embedding, name='embedding', trainable=False)
         represented_sentences = tf.nn.embedding_lookup(self.embedding, self.forms)
         return represented_sentences
 
     def updated_pretrained_we(self, words, language):
+        self.started_embedding_training = False
         return self.only_pretrained_we(words, language)
 
     def __init__(self, rnn_cell, rnn_cell_dim, method, words, logdir, expname, threads=1, seed=42, language='cs'):
@@ -135,8 +137,10 @@ class Network:
         return self.session.run(self.global_step)
 
     def train(self, sentence_lens, forms, tags, epoch):
-        if epoch > 3:
-            tf.get_variable('embedding', trainable=True)
+        if self.method == 'updated_pretrained_we' and epoch > 1 and not self.started_embedding_training:
+            print("Started the embedding training", file=sys.stderr)
+            self.started_embedding_training = True
+            tf.trainable_variables().append(self.embedding)
 
         _, summary = self.session.run([self.training, self.summary],
                                       {self.sentence_lens: sentence_lens, self.forms: forms,
