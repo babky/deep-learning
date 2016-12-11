@@ -10,3 +10,12 @@ hw4-gym_cartpole_supervised/1-gym-babka-*-epoch-*
 hw4-gym_cartpole_supervised/checkpoint
 hw4-gym_cartpole_supervised/hw-4-gym_cartpole_supervised_model.tar.gz
 hw6-sequence_generation/hw6-sequence_generation.tar.gz
+/hw8-tagger/en-dev.txt
+/hw8-tagger/cs-dev.txt
+/hw8-tagger/LICENSE.CC-BY-NC-SA-4
+/hw8-tagger/en-test.txt
+/hw8-tagger/cs-train.txt
+/hw8-tagger/en-train.txt
+/hw8-tagger/cs-test.txt
+/hw8-tagger/word_embedding-cs.txt
+/hw8-tagger/word_embedding-en.txt
