@@ -36,6 +36,10 @@ LANGUAGES = {
 
 
 class Method(object):
+
+    def __init__(self, uses_character_data):
+        self._uses_character_data = uses_character_data
+
     def create_embedding(self, network, words, language):
         pass
 
@@ -45,9 +49,17 @@ class Method(object):
     def initialize_training(self, network, loss_masked):
         network.training = tf.train.AdamOptimizer().minimize(loss_masked, global_step=network.global_step)
 
+    @property
+    def uses_character_data(self):
+        return self._uses_character_data
+
 
 class LearnedWe(Method):
+
     EMBEDDING_SIZE = 128
+
+    def __init__(self):
+        super(LearnedWe, self).__init__(True)
 
     def create_embedding(self, network, words, language):
         network.embedding = tf.Variable(tf.random_uniform([len(words), self.EMBEDDING_SIZE], -1.0, 1.0))
@@ -56,10 +68,14 @@ class LearnedWe(Method):
 
 
 class OnlyPreTrainedWe(Method):
+
+    def __init__(self):
+        super(OnlyPreTrainedWe, self).__init__(False)
+
     def create_embedding(self, network, words, language):
         print('Loading the embeddings from {0}'.format(LANGUAGES[language]['embeddings']), file=sys.stderr)
         we = WordEmbeddings(LANGUAGES[language]['embeddings'])
-        embedding = np.concatenate((we.we, np.zeros([2, we.dimension])), axis=0)
+        embedding = np.concatenate((we.we, np.random.uniform(low=-1.0, high=1.0, size=[2, we.dimension])), axis=0)
         embedding = embedding.astype(dtype=np.float32)
 
         unk = len(we.words)
@@ -86,6 +102,7 @@ class OnlyPreTrainedWe(Method):
 
 
 class UpdatedPreTrainedWe(OnlyPreTrainedWe):
+
     def create_embedding(self, network, words, language):
         network.started_embedding_training = False
         return super(UpdatedPreTrainedWe, self).create_embedding(network, words, language)
@@ -108,18 +125,19 @@ class UpdatedPreTrainedWe(OnlyPreTrainedWe):
 
 class CharRnn(Method):
 
-    def create_embedding(self, network, words, language):
-        network.embedding = tf.Variable(tf.random_uniform([len(words), self.EMBEDDING_SIZE], -1.0, 1.0))
-        represented_sentences = tf.nn.embedding_lookup(network.embedding, network.forms)
-        return represented_sentences
+    def __init__(self):
+        super(CharRnn, self).__init__(True)
 
+    def create_embedding(self, network, words, language):
+        pass
 
 class CharConv(Method):
 
+    def __init__(self):
+        super(CharConv, self).__init__(True)
+
     def create_embedding(self, network, words, language):
-        network.embedding = tf.Variable(tf.random_uniform([len(words), self.EMBEDDING_SIZE], -1.0, 1.0))
-        represented_sentences = tf.nn.embedding_lookup(network.embedding, network.forms)
-        return represented_sentences
+        pass
 
 
 class Network(object):
@@ -270,11 +288,17 @@ def main():
     for epoch in range(args.epochs):
         print("Training epoch {}".format(epoch + 1), file=sys.stderr)
         while not data_train.epoch_finished():
-            sentence_lens, word_ids = data_train.next_batch(args.batch_size)
-            network.train(sentence_lens, word_ids[data_train.FORMS], word_ids[data_train.TAGS], epoch)
             # To use character-level embeddings, pass including_charseqs=True to next_batch
             # and instead of word_ids[data_train.FORMS] use charseq_ids[data_train.FORMS],
             # charseqs[data_train.FORMS] and charseq_lens[data_train.FORMS]
+            if network.method.uses_character_data:
+                batch = data_train.next_batch(args.batch_size, including_charseqs=True)
+                sentence_lens, word_ids, batch_charseq_ids, batch_charseqs, batch_charseq_lens = batch
+                print(batch)
+                network.train(sentence_lens, word_ids[data_train.FORMS], word_ids[data_train.TAGS], epoch)
+            else:
+                sentence_lens, word_ids = data_train.next_batch(args.batch_size)
+                network.train(sentence_lens, word_ids[data_train.FORMS], word_ids[data_train.TAGS], epoch)
 
         dev_sentence_lens, dev_word_ids = data_dev.whole_data_as_batch()
         dev_accuracy = network.evaluate(dev_sentence_lens, dev_word_ids[data_dev.FORMS], dev_word_ids[data_dev.TAGS])
