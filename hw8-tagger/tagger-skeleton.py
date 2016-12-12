@@ -47,7 +47,6 @@ class Method(object):
 
 
 class LearnedWe(Method):
-
     EMBEDDING_SIZE = 128
 
     def create_embedding(self, network, words, language):
@@ -57,7 +56,6 @@ class LearnedWe(Method):
 
 
 class OnlyPreTrainedWe(Method):
-
     def create_embedding(self, network, words, language):
         print('Loading the embeddings from {0}'.format(LANGUAGES[language]['embeddings']), file=sys.stderr)
         we = WordEmbeddings(LANGUAGES[language]['embeddings'])
@@ -83,12 +81,11 @@ class OnlyPreTrainedWe(Method):
         return represented_sentences
 
     def update_forms(self, network, forms):
-        f = np.vectorize(lambda x: network.embedding_perm[x] if x != 0 else 0)
+        f = np.vectorize(lambda x: network.embedding_perm[x])
         return f(forms)
 
 
 class UpdatedPreTrainedWe(OnlyPreTrainedWe):
-
     def create_embedding(self, network, words, language):
         network.started_embedding_training = False
         return super(UpdatedPreTrainedWe, self).create_embedding(network, words, language)
@@ -107,6 +104,22 @@ class UpdatedPreTrainedWe(OnlyPreTrainedWe):
         trainable = tf.trainable_variables() + [network.embedding]
         training = tf.train.AdamOptimizer().minimize(loss_masked, global_step=network.global_step, var_list=trainable)
         network.training_with_embedding = training
+
+
+class CharRnn(Method):
+
+    def create_embedding(self, network, words, language):
+        network.embedding = tf.Variable(tf.random_uniform([len(words), self.EMBEDDING_SIZE], -1.0, 1.0))
+        represented_sentences = tf.nn.embedding_lookup(network.embedding, network.forms)
+        return represented_sentences
+
+
+class CharConv(Method):
+
+    def create_embedding(self, network, words, language):
+        network.embedding = tf.Variable(tf.random_uniform([len(words), self.EMBEDDING_SIZE], -1.0, 1.0))
+        represented_sentences = tf.nn.embedding_lookup(network.embedding, network.forms)
+        return represented_sentences
 
 
 class Network(object):
