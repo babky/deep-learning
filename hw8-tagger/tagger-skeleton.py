@@ -5,7 +5,6 @@ from __future__ import print_function
 
 import datetime
 import numpy as np
-import numpy.random as np_random
 import sys
 import tensorflow as tf
 import tensorflow.contrib.layers as tf_layers
@@ -36,41 +35,85 @@ LANGUAGES = {
 }
 
 
-class Network:
-    TAG_COUNT = 19
-    PRETRAINED_EMBEDDING_SIZE = 100
+class Method(object):
+    def create_embedding(self, network, words, language):
+        pass
 
-    def learned_we(self, words):
-        embedding_size = 128
-        self.embedding = tf.Variable(tf.random_uniform([len(words), embedding_size], -1.0, 1.0))
-        represented_sentences = tf.nn.embedding_lookup(self.embedding, self.forms)
+    def get_training(self, network, epoch):
+        return network.training
+
+    def initialize_training(self, network, loss_masked):
+        network.training = tf.train.AdamOptimizer().minimize(loss_masked, global_step=network.global_step)
+
+
+class LearnedWe(Method):
+
+    EMBEDDING_SIZE = 128
+
+    def create_embedding(self, network, words, language):
+        network.embedding = tf.Variable(tf.random_uniform([len(words), self.EMBEDDING_SIZE], -1.0, 1.0))
+        represented_sentences = tf.nn.embedding_lookup(network.embedding, network.forms)
         return represented_sentences
 
-    def only_pretrained_we(self, words, language):
+
+class OnlyPreTrainedWe(Method):
+
+    def create_embedding(self, network, words, language):
         print('Loading the embeddings from {0}'.format(LANGUAGES[language]['embeddings']), file=sys.stderr)
-        embedding_size = self.PRETRAINED_EMBEDDING_SIZE
         we = WordEmbeddings(LANGUAGES[language]['embeddings'])
-        embedding = np.concatenate((we.we, np.zeros([len(words) - len(we.we), embedding_size])), axis=0)
+        embedding = np.concatenate((we.we, np.zeros([2, we.dimension])), axis=0)
+        embedding = embedding.astype(dtype=np.float32)
+
+        unk = len(we.words)
+        pad = unk + 1
 
         perm = np.zeros([len(words)], dtype=int)
-        l = len(words) - 1
         for i in range(len(words)):
-            perm[i] = l
-            if words[i] in we.words_map:
+            if words[i] == '<pad>':
+                perm[i] = pad
+            elif words[i] in we.words_map:
                 perm[i] = we.words_map[words[i]]
             else:
-                l -= 1
+                # Unk
+                perm[i] = unk
 
-        embedding = embedding.astype(np.float32)
-        embedding = embedding[perm]
-
-        self.embedding = tf.Variable(embedding, name='embedding', trainable=False)
-        represented_sentences = tf.nn.embedding_lookup(self.embedding, self.forms)
+        network.embedding_perm = perm
+        network.embedding = tf.Variable(embedding, name='embedding', trainable=False)
+        represented_sentences = tf.nn.embedding_lookup(network.embedding, network.forms)
         return represented_sentences
 
-    def updated_pretrained_we(self, words, language):
-        self.started_embedding_training = False
-        return self.only_pretrained_we(words, language)
+    def update_forms(self, network, forms):
+        f = np.vectorize(lambda x: network.embedding_perm[x] if x != 0 else 0)
+        return f(forms)
+
+
+class UpdatedPreTrainedWe(OnlyPreTrainedWe):
+
+    def create_embedding(self, network, words, language):
+        network.started_embedding_training = False
+        return super(UpdatedPreTrainedWe, self).create_embedding(network, words, language)
+
+    def get_training(self, network, epoch):
+        training = network.training
+        if epoch > 1:
+            if not network.started_embedding_training:
+                print("Started the embedding training", file=sys.stderr)
+                network.started_embedding_training = True
+            training = network.training_with_embedding
+        return training
+
+    def initialize_training(self, network, loss_masked):
+        super(UpdatedPreTrainedWe, self).initialize_training(network, loss_masked)
+        trainable = tf.trainable_variables() + [network.embedding]
+        training = tf.train.AdamOptimizer().minimize(loss_masked, global_step=network.global_step, var_list=trainable)
+        network.training_with_embedding = training
+
+
+class Network(object):
+    TAG_COUNT = 19
+
+    def learned_we(self):
+        self.method = LearnedWe()
 
     def __init__(self, rnn_cell, rnn_cell_dim, method, words, logdir, expname, threads=1, seed=42, language='cs'):
         # Create an empty graph and a session
@@ -96,21 +139,23 @@ class Network:
             self.forms = tf.placeholder(tf.int32, [None, None])
             self.tags = tf.placeholder(tf.int32, [None, None])
 
-            self.method = method
+            self.method_name = method
 
             if method == 'learned_we':
-                represented_sentences = self.learned_we(words)
+                self.method = LearnedWe()
             elif method == 'only_pretrained_we':
-                represented_sentences = self.only_pretrained_we(words, language)
+                self.method = OnlyPreTrainedWe()
             elif method == 'updated_pretrained_we':
-                represented_sentences = self.updated_pretrained_we(words, language)
+                self.method = UpdatedPreTrainedWe()
             else:
                 NotImplemented("Method {0} not implemented".format(method))
+
+            represented_sentences = self.method.create_embedding(self, words, language)
 
             # Go back and forth.
             rnn_out = tf.nn.bidirectional_dynamic_rnn(rnn_cell, rnn_cell, represented_sentences, self.sentence_lens,
                                                       dtype=tf.float32)
-            (rnn_outputs), (state_bw, state_fw) = rnn_out
+            (rnn_outputs), _ = rnn_out
             combined_outputs = tf.concat(2, rnn_outputs)
 
             # Linear activation
@@ -131,10 +176,7 @@ class Network:
             # Training & loss
             loss = tf.nn.sparse_softmax_cross_entropy_with_logits(outputs, self.tags)
             loss_masked = tf.boolean_mask(loss, mask)
-            self.training = tf.train.AdamOptimizer().minimize(loss_masked, global_step=self.global_step)
-
-            if method == 'updated_pretrained_we':
-                self.training_with_embedding = tf.train.AdamOptimizer().minimize(loss_masked, global_step=self.global_step, var_list=tf.trainable_variables() + [self.embedding])
+            self.method.initialize_training(self, loss_masked)
 
             self.dataset_name = tf.placeholder(tf.string, [])
             self.summary = tf.merge_summary(
@@ -152,12 +194,8 @@ class Network:
         return self.session.run(self.global_step)
 
     def train(self, sentence_lens, forms, tags, epoch):
-        training = self.training
-        if self.method == 'updated_pretrained_we' and epoch > 1:
-            if not self.started_embedding_training:
-                print("Started the embedding training", file=sys.stderr)
-                self.started_embedding_training = True
-            training = self.training_with_embedding
+        training = self.method.get_training(self, epoch)
+        forms = self.method.update_forms(self, forms)
 
         _, summary = self.session.run([training, self.summary],
                                       {self.sentence_lens: sentence_lens, self.forms: forms,
@@ -165,6 +203,7 @@ class Network:
         self.summary_writer.add_summary(summary, self.training_step)
 
     def evaluate(self, sentence_lens, forms, tags):
+        forms = self.method.update_forms(self, forms)
         accuracy, summary = self.session.run([self.accuracy, self.summary],
                                              {self.sentence_lens: sentence_lens, self.forms: forms,
                                               self.tags: tags, self.dataset_name: "dev"})
@@ -172,11 +211,12 @@ class Network:
         return accuracy
 
     def predict(self, sentence_lens, forms):
+        forms = self.method.update_forms(self, forms)
         return self.session.run(self.predictions,
                                 {self.sentence_lens: sentence_lens, self.forms: forms})
 
 
-if __name__ == "__main__":
+def main():
     # Fix random seed
     np.random.seed(42)
 
@@ -240,3 +280,7 @@ if __name__ == "__main__":
         for j in range(data_test.sentence_lens[i]):
             print("{}\t_\t{}".format(test_forms[i][j], test_tags[test_predictions[i, j]]))
         print()
+
+
+if __name__ == "__main__":
+    main()
