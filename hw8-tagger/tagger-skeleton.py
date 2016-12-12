@@ -49,6 +49,9 @@ class Method(object):
     def initialize_training(self, network, loss_masked):
         network.training = tf.train.AdamOptimizer().minimize(loss_masked, global_step=network.global_step)
 
+    def update_forms(self, network, forms):
+        return forms
+
     @property
     def uses_character_data(self):
         return self._uses_character_data
@@ -59,7 +62,7 @@ class LearnedWe(Method):
     EMBEDDING_SIZE = 128
 
     def __init__(self):
-        super(LearnedWe, self).__init__(True)
+        super(LearnedWe, self).__init__(False)
 
     def create_embedding(self, network, words, language):
         network.embedding = tf.Variable(tf.random_uniform([len(words), self.EMBEDDING_SIZE], -1.0, 1.0))
@@ -75,11 +78,11 @@ class OnlyPreTrainedWe(Method):
     def create_embedding(self, network, words, language):
         print('Loading the embeddings from {0}'.format(LANGUAGES[language]['embeddings']), file=sys.stderr)
         we = WordEmbeddings(LANGUAGES[language]['embeddings'])
-        embedding = np.concatenate((we.we, np.random.uniform(low=-1.0, high=1.0, size=[2, we.dimension])), axis=0)
+        embedding = np.concatenate((we.we, np.zeros([len(words) - len(we.words), we.dimension]), np.random.uniform(low=-1.0, high=1.0, size=[1, we.dimension])), axis=0)
         embedding = embedding.astype(dtype=np.float32)
 
-        unk = len(we.words)
-        pad = unk + 1
+        pad = len(we.words)
+        unk = pad + 1
 
         perm = np.zeros([len(words)], dtype=int)
         for i in range(len(words)):
@@ -90,6 +93,7 @@ class OnlyPreTrainedWe(Method):
             else:
                 # Unk
                 perm[i] = unk
+                unk += 1
 
         network.embedding_perm = perm
         network.embedding = tf.Variable(embedding, name='embedding', trainable=False)
@@ -131,6 +135,7 @@ class CharRnn(Method):
     def create_embedding(self, network, words, language):
         pass
 
+
 class CharConv(Method):
 
     def __init__(self):
@@ -150,6 +155,13 @@ class Network(object):
         # Create an empty graph and a session
         graph = tf.Graph()
         graph.seed = seed
+
+        self.training = None
+        self.embedding = None
+        self.embedding_perm = None
+        self.started_embedding_training = None
+        self.training_with_embedding = None
+
         self.session = tf.Session(graph=graph, config=tf.ConfigProto(inter_op_parallelism_threads=threads,
                                                                      intra_op_parallelism_threads=threads))
 
@@ -294,7 +306,6 @@ def main():
             if network.method.uses_character_data:
                 batch = data_train.next_batch(args.batch_size, including_charseqs=True)
                 sentence_lens, word_ids, batch_charseq_ids, batch_charseqs, batch_charseq_lens = batch
-                print(batch)
                 network.train(sentence_lens, word_ids[data_train.FORMS], word_ids[data_train.TAGS], epoch)
             else:
                 sentence_lens, word_ids = data_train.next_batch(args.batch_size)
