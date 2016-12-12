@@ -133,6 +133,9 @@ class Network:
             loss_masked = tf.boolean_mask(loss, mask)
             self.training = tf.train.AdamOptimizer().minimize(loss_masked, global_step=self.global_step)
 
+            if method == 'updated_pretrained_we':
+                self.training_with_embedding = tf.train.AdamOptimizer().minimize(loss_masked, global_step=self.global_step, var_list=tf.trainable_variables() + [self.embedding])
+
             self.dataset_name = tf.placeholder(tf.string, [])
             self.summary = tf.merge_summary(
                 [tf.scalar_summary(self.dataset_name + "/loss", tf_losses.compute_weighted_loss(loss_masked)),
@@ -149,12 +152,14 @@ class Network:
         return self.session.run(self.global_step)
 
     def train(self, sentence_lens, forms, tags, epoch):
-        if self.method == 'updated_pretrained_we' and epoch > 1 and not self.started_embedding_training:
-            print("Started the embedding training", file=sys.stderr)
-            self.started_embedding_training = True
-            tf.trainable_variables().append(self.embedding)
+        training = self.training
+        if self.method == 'updated_pretrained_we' and epoch > 1:
+            if not self.started_embedding_training:
+                print("Started the embedding training", file=sys.stderr)
+                self.started_embedding_training = True
+            training = self.training_with_embedding
 
-        _, summary = self.session.run([self.training, self.summary],
+        _, summary = self.session.run([training, self.summary],
                                       {self.sentence_lens: sentence_lens, self.forms: forms,
                                        self.tags: tags, self.dataset_name: "train"})
         self.summary_writer.add_summary(summary, self.training_step)
