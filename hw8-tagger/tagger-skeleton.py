@@ -78,8 +78,6 @@ class OnlyPreTrainedWe(Method):
     def create_embedding(self, network, words, language):
         print('Loading the embeddings from {0}'.format(LANGUAGES[language]['embeddings']), file=sys.stderr)
         we = WordEmbeddings(LANGUAGES[language]['embeddings'])
-        embedding = np.concatenate((we.we, np.zeros([len(words) - len(we.words), we.dimension]), np.random.uniform(low=-1.0, high=1.0, size=[1, we.dimension])), axis=0)
-        embedding = embedding.astype(dtype=np.float32)
 
         pad = len(we.words)
         unk = pad + 1
@@ -88,13 +86,15 @@ class OnlyPreTrainedWe(Method):
         for i in range(len(words)):
             if words[i] == '<pad>':
                 perm[i] = pad
-            elif words[i] in we.words_map:
-                perm[i] = we.words_map[words[i]]
+            elif words[i].lower() in we.words_map:
+                perm[i] = we.words_map[words[i].lower()]
             else:
                 # Unk
                 perm[i] = unk
-                unk += 1
+                # unk += 1
 
+        embedding = np.concatenate((we.we, np.random.uniform(low=-1.0, high=1.0, size=[1, we.dimension]), np.zeros([1, we.dimension])), axis=0)
+        embedding = embedding.astype(dtype=np.float32)
         network.embedding_perm = perm
         network.embedding = tf.Variable(embedding, name='embedding', trainable=False)
         represented_sentences = tf.nn.embedding_lookup(network.embedding, network.forms)
@@ -173,7 +173,8 @@ class Network(object):
             if rnn_cell == "LSTM":
                 rnn_cell = tf.nn.rnn_cell.LSTMCell(rnn_cell_dim)
             elif rnn_cell == "GRU":
-                rnn_cell = tf.nn.rnn_cell.GRUCell(rnn_cell_dim)
+                rnn_cell_fw = tf.nn.rnn_cell.GRUCell(rnn_cell_dim)
+                rnn_cell_bw = tf.nn.rnn_cell.GRUCell(rnn_cell_dim)
             else:
                 raise ValueError("Unknown rnn_cell {}".format(rnn_cell))
 
@@ -196,7 +197,7 @@ class Network(object):
             represented_sentences = self.method.create_embedding(self, words, language)
 
             # Go back and forth.
-            rnn_out = tf.nn.bidirectional_dynamic_rnn(rnn_cell, rnn_cell, represented_sentences, self.sentence_lens,
+            rnn_out = tf.nn.bidirectional_dynamic_rnn(rnn_cell_fw, rnn_cell_bw, represented_sentences, self.sentence_lens,
                                                       dtype=tf.float32)
             (rnn_outputs), _ = rnn_out
             combined_outputs = tf.concat(2, rnn_outputs)
