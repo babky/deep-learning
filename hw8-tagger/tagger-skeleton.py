@@ -36,7 +36,6 @@ LANGUAGES = {
 
 
 class Method(object):
-
     def __init__(self, uses_character_data):
         self._uses_character_data = uses_character_data
 
@@ -58,7 +57,6 @@ class Method(object):
 
 
 class LearnedWe(Method):
-
     EMBEDDING_SIZE = 128
 
     def __init__(self):
@@ -71,7 +69,6 @@ class LearnedWe(Method):
 
 
 class OnlyPreTrainedWe(Method):
-
     def __init__(self):
         super(OnlyPreTrainedWe, self).__init__(False)
 
@@ -93,7 +90,8 @@ class OnlyPreTrainedWe(Method):
                 perm[i] = unk
                 # unk += 1
 
-        embedding = np.concatenate((we.we, np.random.uniform(low=-1.0, high=1.0, size=[1, we.dimension]), np.zeros([1, we.dimension])), axis=0)
+        embedding = np.concatenate(
+            (we.we, np.random.uniform(low=-1.0, high=1.0, size=[1, we.dimension]), np.zeros([1, we.dimension])), axis=0)
         embedding = embedding.astype(dtype=np.float32)
         network.embedding_perm = perm
         network.embedding = tf.Variable(embedding, name='embedding', trainable=False)
@@ -106,7 +104,6 @@ class OnlyPreTrainedWe(Method):
 
 
 class UpdatedPreTrainedWe(OnlyPreTrainedWe):
-
     def create_embedding(self, network, words, language):
         network.started_embedding_training = False
         return super(UpdatedPreTrainedWe, self).create_embedding(network, words, language)
@@ -128,7 +125,6 @@ class UpdatedPreTrainedWe(OnlyPreTrainedWe):
 
 
 class CharRnn(Method):
-
     def __init__(self):
         super(CharRnn, self).__init__(True)
 
@@ -137,7 +133,6 @@ class CharRnn(Method):
 
 
 class CharConv(Method):
-
     def __init__(self):
         super(CharConv, self).__init__(True)
 
@@ -151,7 +146,8 @@ class Network(object):
     def learned_we(self):
         self.method = LearnedWe()
 
-    def __init__(self, rnn_cell, rnn_cell_dim, method, words, logdir, expname, threads=1, seed=42, language='cs'):
+    def __init__(self, rnn_cell, rnn_cell_dim, method, words, logdir, expname, threads=1, seed=42, language='en',
+                 layers=1):
         # Create an empty graph and a session
         graph = tf.Graph()
         graph.seed = seed
@@ -173,8 +169,9 @@ class Network(object):
             if rnn_cell == "LSTM":
                 rnn_cell = tf.nn.rnn_cell.LSTMCell(rnn_cell_dim)
             elif rnn_cell == "GRU":
-                rnn_cell_fw = tf.nn.rnn_cell.GRUCell(rnn_cell_dim)
-                rnn_cell_bw = tf.nn.rnn_cell.GRUCell(rnn_cell_dim)
+                rnn_cell = tf.nn.rnn_cell.GRUCell
+                rnn_cell_fw = rnn_cell(rnn_cell_dim)
+                rnn_cell_bw = rnn_cell(rnn_cell_dim)
             else:
                 raise ValueError("Unknown rnn_cell {}".format(rnn_cell))
 
@@ -197,10 +194,15 @@ class Network(object):
             represented_sentences = self.method.create_embedding(self, words, language)
 
             # Go back and forth.
-            rnn_out = tf.nn.bidirectional_dynamic_rnn(rnn_cell_fw, rnn_cell_bw, represented_sentences, self.sentence_lens,
-                                                      dtype=tf.float32)
-            (rnn_outputs), _ = rnn_out
-            combined_outputs = tf.concat(2, rnn_outputs)
+            combined_outputs = represented_sentences
+            for layer in range(layers):
+                scope_name = "layer_{0}".format(layer)
+                with tf.variable_scope(scope_name):
+                    rnn_out = tf.nn.bidirectional_dynamic_rnn(rnn_cell(rnn_cell_dim), rnn_cell(rnn_cell_dim),
+                                                              combined_outputs, self.sentence_lens, dtype=tf.float32,
+                                                              scope=scope_name)
+                    (rnn_outputs), _ = rnn_out
+                    combined_outputs = tf.concat(2, rnn_outputs)
 
             # Linear activation
             outputs = tf_layers.fully_connected(combined_outputs, self.TAG_COUNT, activation_fn=None)
@@ -273,6 +275,7 @@ def main():
     parser.add_argument("--language", default=10, type=str, help="Language")
     parser.add_argument("--method", default="learned_we", type=str, help="Which method of word embeddings to use.")
     parser.add_argument("--logdir", default="logs", type=str, help="Logdir name.")
+    parser.add_argument("--layers", default=1, type=int, help="Bidirectional layer count.")
     parser.add_argument("--rnn_cell", default="GRU", type=str, help="RNN cell type.")
     parser.add_argument("--rnn_cell_dim", default=100, type=int, help="RNN cell dimension.")
     parser.add_argument("--threads", default=1, type=int, help="Maximum number of threads to use.")
@@ -291,8 +294,8 @@ def main():
     expname = "tagger-{}{}-m{}-bs{}-epochs{}".format(args.rnn_cell, args.rnn_cell_dim, args.method, args.batch_size,
                                                      args.epochs)
     network = Network(rnn_cell=args.rnn_cell, rnn_cell_dim=args.rnn_cell_dim, method=args.method,
-                      words=data_train.factors[data_train.FORMS]['words'],
-                      logdir=args.logdir, expname=expname, threads=args.threads, language=args.language)
+                      words=data_train.factors[data_train.FORMS]['words'], logdir=args.logdir, expname=expname,
+                      threads=args.threads, language=args.language, layers=args.layers)
 
     # Train
     best_dev_accuracy = 0
