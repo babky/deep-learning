@@ -125,11 +125,27 @@ class UpdatedPreTrainedWe(OnlyPreTrainedWe):
 
 
 class CharRnn(Method):
-    def __init__(self):
+    CHAR_EMBEDDING_SIZE = 32
+
+    def __init__(self, rnn_cell_dim, alphabet):
         super(CharRnn, self).__init__(True)
+        self.rnn_cell_dim = rnn_cell_dim
+        self.alphabet = alphabet
 
     def create_embedding(self, network, words, language):
-        pass
+        rnn_cell = tf.nn.rnn_cell.GRUCell
+        alphabet_size = len(self.alphabet)
+        network.char_embedding = tf.Variable(tf.random_uniform([alphabet_size, self.CHAR_EMBEDDING_SIZE], -1.0, 1.0))
+        represented_charseqs = tf.nn.embedding_lookup(network.char_embedding, network.charseqs)
+        _rnn_out, rnn_states = tf.nn.bidirectional_dynamic_rnn(rnn_cell(self.rnn_cell_dim), rnn_cell(self.rnn_cell_dim),
+                                                               represented_charseqs, network.charseq_lens,
+                                                               dtype=tf.float32,
+                                                               scope="rnn_embedding")
+        word_embeddings = tf.concat(1, rnn_states)
+        # represented_sentences = tf.nn.embedding_lookup(network.charseqs, network.forms)
+        network.embedding = tf.nn.embedding_lookup(word_embeddings, network.forms)
+        print(network.embedding)
+        return network.embedding
 
 
 class CharConv(Method):
@@ -146,7 +162,8 @@ class Network(object):
     def learned_we(self):
         self.method = LearnedWe()
 
-    def __init__(self, rnn_cell, rnn_cell_dim, method, words, logdir, expname, threads=1, seed=42, language='en',
+    def __init__(self, rnn_cell, rnn_cell_dim, method, words, logdir, expname, alphabet, threads=1, seed=42,
+                 language='en',
                  layers=1):
         # Create an empty graph and a session
         graph = tf.Graph()
@@ -157,6 +174,9 @@ class Network(object):
         self.embedding_perm = None
         self.started_embedding_training = None
         self.training_with_embedding = None
+        self.charseqs = None
+        self.uses_character_data = False
+        self.charseq_lens = None
 
         self.session = tf.Session(graph=graph, config=tf.ConfigProto(inter_op_parallelism_threads=threads,
                                                                      intra_op_parallelism_threads=threads))
@@ -170,14 +190,17 @@ class Network(object):
                 rnn_cell = tf.nn.rnn_cell.LSTMCell(rnn_cell_dim)
             elif rnn_cell == "GRU":
                 rnn_cell = tf.nn.rnn_cell.GRUCell
-                rnn_cell_fw = rnn_cell(rnn_cell_dim)
-                rnn_cell_bw = rnn_cell(rnn_cell_dim)
             else:
                 raise ValueError("Unknown rnn_cell {}".format(rnn_cell))
 
             self.global_step = tf.Variable(0, dtype=tf.int64, trainable=False, name="global_step")
+
             self.sentence_lens = tf.placeholder(tf.int32, [None])
+            self.charseq_lens = tf.placeholder(tf.int32, [None])
+
             self.forms = tf.placeholder(tf.int32, [None, None])
+            self.charseqs = tf.placeholder(tf.int32, [None, None])
+
             self.tags = tf.placeholder(tf.int32, [None, None])
 
             self.method_name = method
@@ -188,6 +211,9 @@ class Network(object):
                 self.method = OnlyPreTrainedWe()
             elif method == 'updated_pretrained_we':
                 self.method = UpdatedPreTrainedWe()
+            elif method == 'char_rnn':
+                self.method = CharRnn(rnn_cell_dim, alphabet)
+                self.uses_character_data = True
             else:
                 NotImplemented("Method {0} not implemented".format(method))
 
@@ -239,27 +265,40 @@ class Network(object):
     def training_step(self):
         return self.session.run(self.global_step)
 
-    def train(self, sentence_lens, forms, tags, epoch):
+    def train(self, sentence_lens, forms, tags, epoch, charseqs=None, charseq_lens=None):
         training = self.method.get_training(self, epoch)
         forms = self.method.update_forms(self, forms)
 
-        _, summary = self.session.run([training, self.summary],
-                                      {self.sentence_lens: sentence_lens, self.forms: forms,
-                                       self.tags: tags, self.dataset_name: "train"})
+        data = {self.sentence_lens: sentence_lens, self.forms: forms,
+                self.tags: tags, self.dataset_name: "train"}
+
+        if self.uses_character_data:
+            data[self.charseqs] = charseqs
+            data[self.charseq_lens] = charseq_lens
+
+        _, summary = self.session.run([training, self.summary], data)
         self.summary_writer.add_summary(summary, self.training_step)
 
-    def evaluate(self, sentence_lens, forms, tags):
+    def evaluate(self, sentence_lens, forms, tags, charseqs=None, charseq_lens=None):
         forms = self.method.update_forms(self, forms)
-        accuracy, summary = self.session.run([self.accuracy, self.summary],
-                                             {self.sentence_lens: sentence_lens, self.forms: forms,
-                                              self.tags: tags, self.dataset_name: "dev"})
+        data = {self.sentence_lens: sentence_lens, self.forms: forms,
+                self.tags: tags, self.dataset_name: "dev"}
+
+        if self.uses_character_data:
+            data[self.charseqs] = charseqs
+            data[self.charseq_lens] = charseq_lens
+
+        accuracy, summary = self.session.run([self.accuracy, self.summary], data)
         self.summary_writer.add_summary(summary, self.training_step)
         return accuracy
 
-    def predict(self, sentence_lens, forms):
+    def predict(self, sentence_lens, forms, charseqs=None, charseq_lens=None):
         forms = self.method.update_forms(self, forms)
-        return self.session.run(self.predictions,
-                                {self.sentence_lens: sentence_lens, self.forms: forms})
+        data = {self.sentence_lens: sentence_lens, self.forms: forms}
+        if self.uses_character_data:
+            data[self.charseqs] = charseqs
+            data[self.charseq_lens] = charseq_lens
+        return self.session.run(self.predictions, data)
 
 
 def main():
@@ -272,8 +311,8 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--batch_size", default=64, type=int, help="Batch size.")
     parser.add_argument("--epochs", default=10, type=int, help="Number of epochs.")
-    parser.add_argument("--language", default=10, type=str, help="Language")
-    parser.add_argument("--method", default="learned_we", type=str, help="Which method of word embeddings to use.")
+    parser.add_argument("--language", default='en', type=str, help="Language")
+    parser.add_argument("--method", default="char_rnn", type=str, help="Which method of word embeddings to use.")
     parser.add_argument("--logdir", default="logs", type=str, help="Logdir name.")
     parser.add_argument("--layers", default=1, type=int, help="Bidirectional layer count.")
     parser.add_argument("--rnn_cell", default="GRU", type=str, help="RNN cell type.")
@@ -295,7 +334,7 @@ def main():
                                                      args.epochs)
     network = Network(rnn_cell=args.rnn_cell, rnn_cell_dim=args.rnn_cell_dim, method=args.method,
                       words=data_train.factors[data_train.FORMS]['words'], logdir=args.logdir, expname=expname,
-                      threads=args.threads, language=args.language, layers=args.layers)
+                      threads=args.threads, language=args.language, layers=args.layers, alphabet=data_train.alphabet)
 
     # Train
     best_dev_accuracy = 0
@@ -309,20 +348,35 @@ def main():
             # charseqs[data_train.FORMS] and charseq_lens[data_train.FORMS]
             if network.method.uses_character_data:
                 batch = data_train.next_batch(args.batch_size, including_charseqs=True)
-                sentence_lens, word_ids, batch_charseq_ids, batch_charseqs, batch_charseq_lens = batch
-                network.train(sentence_lens, word_ids[data_train.FORMS], word_ids[data_train.TAGS], epoch)
+                sentence_lens, word_ids, charseq_ids, charseqs, charseq_lens = batch
+                network.train(sentence_lens, charseq_ids[data_train.FORMS], word_ids[data_train.TAGS], epoch,
+                              charseqs[data_train.FORMS], charseq_lens[data_train.FORMS])
             else:
                 sentence_lens, word_ids = data_train.next_batch(args.batch_size)
                 network.train(sentence_lens, word_ids[data_train.FORMS], word_ids[data_train.TAGS], epoch)
 
-        dev_sentence_lens, dev_word_ids = data_dev.whole_data_as_batch()
-        dev_accuracy = network.evaluate(dev_sentence_lens, dev_word_ids[data_dev.FORMS], dev_word_ids[data_dev.TAGS])
+        if network.method.uses_character_data:
+            dev_sentence_lens, dev_word_ids, charseq_ids, charseqs, charseq_lens = data_dev.whole_data_as_batch(True)
+            dev_accuracy = network.evaluate(dev_sentence_lens, charseq_ids[data_train.FORMS],
+                                            dev_word_ids[data_dev.TAGS], charseqs[data_train.FORMS],
+                                            charseq_lens[data_train.FORMS])
+        else:
+            dev_sentence_lens, dev_word_ids = data_dev.whole_data_as_batch()
+            dev_accuracy = network.evaluate(dev_sentence_lens, dev_word_ids[data_dev.FORMS],
+                                            dev_word_ids[data_dev.TAGS])
         print("Development accuracy after epoch {} is {:.2f}.".format(epoch + 1, 100. * dev_accuracy), file=sys.stderr)
 
         if dev_accuracy > best_dev_accuracy:
             best_dev_accuracy = dev_accuracy
-            test_sentence_lens, test_word_ids = data_test.whole_data_as_batch()
-            test_predictions = network.predict(test_sentence_lens, test_word_ids[data_test.FORMS])
+            if network.method.uses_character_data:
+                test_sentence_lens, test_word_ids, charseq_ids, charseqs, charseq_lens = data_test.whole_data_as_batch(
+                    True)
+                test_predictions = network.predict(test_sentence_lens, charseq_ids[data_train.FORMS],
+                                                   charseqs[data_train.FORMS],
+                                                   charseq_lens[data_train.FORMS])
+            else:
+                test_sentence_lens, test_word_ids = data_test.whole_data_as_batch()
+                test_predictions = network.predict(test_sentence_lens, test_word_ids[data_test.FORMS])
 
     # Print test predictions
     test_forms = data_test.factors[data_test.FORMS][
@@ -331,7 +385,7 @@ def main():
     for i in range(len(data_test.sentence_lens)):
         for j in range(data_test.sentence_lens[i]):
             print("{}\t_\t{}".format(test_forms[i][j], test_tags[test_predictions[i, j]]))
-        print()
+        print("")
 
 
 if __name__ == "__main__":
