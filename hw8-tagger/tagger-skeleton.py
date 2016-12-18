@@ -142,9 +142,7 @@ class CharRnn(Method):
                                                                dtype=tf.float32,
                                                                scope="rnn_embedding")
         word_embeddings = tf.concat(1, rnn_states)
-        # represented_sentences = tf.nn.embedding_lookup(network.charseqs, network.forms)
         network.embedding = tf.nn.embedding_lookup(word_embeddings, network.forms)
-        print(network.embedding)
         return network.embedding
 
 
