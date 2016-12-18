@@ -4,8 +4,6 @@ from __future__ import print_function
 
 import environment_discrete
 import numpy as np
-import random
-import functools
 
 if __name__ == "__main__":
     # Fix random seed
@@ -19,10 +17,9 @@ if __name__ == "__main__":
     parser.add_argument("--episodes", default=1000, type=int, help="Episodes in a batch.")
     parser.add_argument("--max_steps", default=500, type=int, help="Maximum number of steps.")
     parser.add_argument("--render_each", default=0, type=int, help="Render some episodes.")
-
-    parser.add_argument("--epsilon", default=0.5, type=float, help="Epsilon.")
+    parser.add_argument("--epsilon", default=0.25, type=float, help="Epsilon.")
     parser.add_argument("--epsilon_final", default=0.01, type=float, help="Epsilon decay rate.")
-    parser.add_argument("--gamma", default=0.99, type=float, help="Discounting factor.")
+    parser.add_argument("--gamma", default=0.99999999999, type=float, help="Discounting factor.")
     args = parser.parse_args()
 
     # Create the environment
@@ -42,8 +39,8 @@ if __name__ == "__main__":
             if args.render_each and episode > 0 and episode % args.render_each == 0:
                 env.render()
 
-            if random.random() < epsilon:
-                action = random.randint(0, env.actions - 1)
+            if np.random.uniform() < epsilon:
+                action = np.random.randint(0, env.actions)
             else:
                 action = np.argmax(Q[state])
 
@@ -74,10 +71,6 @@ if __name__ == "__main__":
             print("Episode {}, mean 100-episode reward {}, mean 100-episode length {}, epsilon {}.".format(
                 episode + 1, np.mean(episode_rewards[-100:]), np.mean(episode_lengths[-100:]), epsilon))
 
-        if len(episode_lengths) == 200:
-            episode_lengths = episode_lengths[-100:]
-            episode_rewards = episode_rewards[-100:]
-
         if args.epsilon_final:
-            epsilon = np.exp(
-                np.interp(episode + 1, [0, args.episodes], [np.log(args.epsilon), np.log(args.epsilon_final)]))
+            interp = np.interp([episode + 1], [0, args.episodes], [np.log(args.epsilon), np.log(args.epsilon_final)])
+            epsilon = np.exp(interp)[0]
