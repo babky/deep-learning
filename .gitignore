@@ -20,3 +20,11 @@ hw6-sequence_generation/hw6-sequence_generation.tar.gz
 /hw8-tagger/word_embedding-cs.txt
 /hw8-tagger/word_embedding-en.txt
 venv-tf-0.11/
+/hw-lemmatizer/word_embedding-cs.txt
+/hw-lemmatizer/cs-dev.txt
+/hw-lemmatizer/en-dev.txt
+/hw-lemmatizer/en-train.txt
+/hw-lemmatizer/cs-test.txt
+/hw-lemmatizer/word_embedding-en.txt
+/hw-lemmatizer/cs-train.txt
+/hw-lemmatizer/en-test.txt
