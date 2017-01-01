@@ -7,27 +7,28 @@ import numpy as np
 import tensorflow as tf
 import tensorflow.contrib.layers as tf_layers
 
+
 class PolicyGradient(object):
     def __init__(self, observations, policy_network, learning_rate, threads=1, seed=42):
         # Create an empty graph and a session
         graph = tf.Graph()
         graph.seed = seed
-        self.session = tf.Session(graph = graph, config=tf.ConfigProto(inter_op_parallelism_threads=threads,
-                                                                       intra_op_parallelism_threads=threads))
+        self.session = tf.Session(graph=graph, config=tf.ConfigProto(inter_op_parallelism_threads=threads,
+                                                                     intra_op_parallelism_threads=threads))
 
         # Construct the graph
         with self.session.graph.as_default():
             self.observations = tf.placeholder(tf.float32, [None, observations])
-            # TODO: define the following, using policy_network
-            # logits = ...
-            # self.probabilities = ... [probabilities of all actions]
-
             self.chosen_actions = tf.placeholder(tf.int32, [None])
             self.rewards = tf.placeholder(tf.float32, [None])
 
-            # TODO: compute loss, as cross_entropy between logits and chosen_actions, multiplying it by self.rewards
-            # loss = ...
-            # self.training = ... [use learning_rate]
+            logits = policy_network(self.observations)
+            self.probabilities = tf.nn.softmax(logits)
+
+            loss = tf.nn.sparse_softmax_cross_entropy_with_logits(logits, self.chosen_actions)
+            loss = tf.multiply(loss, self.rewards)
+
+            self.training = tf.train.AdamOptimizer(learning_rate=learning_rate).minimize(loss)
 
             # Initialize variables
             self.session.run(tf.initialize_all_variables())
@@ -42,12 +43,14 @@ class PolicyGradient(object):
                           self.chosen_actions: chosen_actions,
                           self.rewards: rewards})
 
+
 if __name__ == "__main__":
     # Fix random seed
     np.random.seed(42)
 
     # Parse arguments
     import argparse
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--env", default="CartPole-v1", type=str, help="Name of the environment.")
     parser.add_argument("--episodes", default=1000, type=int, help="Episodes in a batch.")
@@ -56,9 +59,9 @@ if __name__ == "__main__":
     parser.add_argument("--threads", default=1, type=int, help="Maximum number of threads to use.")
 
     parser.add_argument("--alpha", default=0.01, type=float, help="Learning rate.")
-    parser.add_argument("--gamma", default=1.0, type=float, help="Discounting factor.")
-    parser.add_argument("--batch_size", default=5, type=int, help="Number of episodes to train on.")
-    parser.add_argument("--hidden_layer", default=20, type=int, help="Size of hidden layer.")
+    parser.add_argument("--gamma", default=0.9999999999999, type=float, help="Discounting factor.")
+    parser.add_argument("--batch_size", default=1, type=int, help="Number of episodes to train on.")
+    parser.add_argument("--hidden_layer", default=3, type=int, help="Size of hidden layer.")
     args = parser.parse_args()
 
     # Create the environment
@@ -68,12 +71,16 @@ if __name__ == "__main__":
         env.reset()
         env.render()
 
+
     # Create policy network
     def policy_network(observations):
         hidden = tf_layers.fully_connected(observations, args.hidden_layer)
         logits = tf_layers.linear(hidden, env.actions)
         return logits
-    pg = PolicyGradient(observations=env.observations, policy_network=policy_network, learning_rate=args.alpha, threads=args.threads)
+
+
+    pg = PolicyGradient(observations=env.observations, policy_network=policy_network, learning_rate=args.alpha,
+                        threads=args.threads)
 
     episode_rewards, episode_lengths = [], []
     for batch_start in range(0, args.episodes, args.batch_size):
@@ -87,9 +94,9 @@ if __name__ == "__main__":
                 if args.render_each and episode > 0 and episode % args.render_each == 0:
                     env.render()
 
-                # TODO: predict action, using pg.predict and choosing action according to the probabilities
-                # probabilities = ...
-                # action = ...
+                [probabilities] = pg.predict([observation])
+                # action = np.random.choice(env.actions, p=probabilities)
+                action = np.random.choice(np.arange(len(probabilities)), p=probabilities)
 
                 observations.append(observation)
                 actions.append(action)
@@ -103,7 +110,10 @@ if __name__ == "__main__":
                 if done:
                     break
 
-            # TODO: sum and discount rewards, only the last t of them
+            reward_with_discounts = 0
+            for j in range(t):
+                reward_with_discounts = reward_with_discounts * args.gamma + rewards[t - j - 1]
+                rewards[t - j - 1] = reward_with_discounts
 
             episode_rewards.append(total_reward)
             episode_lengths.append(t)
@@ -118,7 +128,8 @@ if __name__ == "__main__":
                     if done:
                         break
 
-                print("Episode {}, current evaluation reward {}, mean 100-episode reward {}, mean 100-episode length {}.".format(
-                    episode + 1, total_reward, np.mean(episode_rewards[-100:]), np.mean(episode_lengths[-100:])))
+                print("Episode {}, current evaluation reward {}, mean 100-episode reward {}, "
+                      "mean 100-episode length {}.".format(episode + 1, total_reward, np.mean(episode_rewards[-100:]),
+                                                           np.mean(episode_lengths[-100:])))
 
         pg.train(observations, actions, rewards)
