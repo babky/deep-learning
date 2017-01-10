@@ -52,16 +52,16 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--env", default="CartPole-v1", type=str, help="Name of the environment.")
-    parser.add_argument("--episodes", default=1000, type=int, help="Episodes in a batch.")
+    parser.add_argument("--env", default="Acrobot-v1", type=str, help="Name of the environment.")
+    parser.add_argument("--episodes", default=1500, type=int, help="Episodes in a batch.")
     parser.add_argument("--max_steps", default=500, type=int, help="Maximum number of steps.")
     parser.add_argument("--render_each", default=0, type=int, help="Render some episodes.")
-    parser.add_argument("--threads", default=1, type=int, help="Maximum number of threads to use.")
+    parser.add_argument("--threads", default=3, type=int, help="Maximum number of threads to use.")
 
     parser.add_argument("--alpha", default=0.01, type=float, help="Learning rate.")
-    parser.add_argument("--gamma", default=0.9999999999999, type=float, help="Discounting factor.")
-    parser.add_argument("--batch_size", default=1, type=int, help="Number of episodes to train on.")
-    parser.add_argument("--hidden_layer", default=3, type=int, help="Size of hidden layer.")
+    parser.add_argument("--gamma", default=1.0, type=float, help="Discounting factor.")
+    parser.add_argument("--batch_size", default=4, type=int, help="Number of episodes to train on.")
+    parser.add_argument("--hidden_layer", default=13, type=int, help="Size of hidden layer.")
     args = parser.parse_args()
 
     # Create the environment
@@ -112,8 +112,8 @@ if __name__ == "__main__":
 
             reward_with_discounts = 0
             for j in range(t):
-                reward_with_discounts = reward_with_discounts * args.gamma + rewards[t - j - 1]
-                rewards[t - j - 1] = reward_with_discounts
+                reward_with_discounts = reward_with_discounts * args.gamma + rewards[-j - 1]
+                rewards[-j - 1] = reward_with_discounts
 
             episode_rewards.append(total_reward)
             episode_lengths.append(t)
